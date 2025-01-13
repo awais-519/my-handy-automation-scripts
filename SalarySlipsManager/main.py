@@ -172,7 +172,7 @@ class SalarySlipsManager:
         df["Basic With Medical Allowance"] = df["Total Earnings"] - df["Commission/Bonus"] - df["Overtime"]
 
         # Save to Excel file
-        df.to_excel("salary_slips.xlsx", index=False)
+        df.to_excel("Joblogic Salary Details.xlsx", index=False)
         logging.info("Data saved to salary_slips.xlsx")
 
 
@@ -182,7 +182,7 @@ helper.load_config()
 helper.connect_to_gmail_imap()
 
 # Search for emails with subject containing "Payslip for the month of"
-search_text = "Payslip for the month of"
+search_text = "Payslip for"
 email_ids = helper.search_emails(search_text)
 
 if email_ids:
