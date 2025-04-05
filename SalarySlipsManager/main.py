@@ -8,6 +8,9 @@ from io import BytesIO
 import pandas as pd
 import re
 
+from fuzzywuzzy import fuzz
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="ExecTime %(asctime)s - LevelName %(levelname)s - FileName %(filename)s - LineNo %(lineno)d - FunctionName %(funcName)s \n %(message)s",
@@ -20,6 +23,7 @@ class SalarySlipsManager:
         self.password = None
         self.mail = None
         self.salary_data = []  # List to hold the earnings and tax data
+        self.pdf_text = ""
 
     def load_config(self):
         try:
@@ -95,43 +99,44 @@ class SalarySlipsManager:
             logging.error(f"Error reading PDF: {e}")
             return None
 
-    def extract_all_values(self, pdf_text):
+    def extract_value(self, keyword, default_value=0):
+        lines = self.pdf_text.split("\n")
+        for line in lines:
+            # Perform fuzzy matching
+            if fuzz.partial_ratio(keyword.lower(), line.lower()) > 80:
+                # Look for numbers after the keyword
+                words = line.split()
+                for word in words:
+                    # Check if word is a number
+                    if word.replace(',', '').replace('.', '').isdigit():
+                        return word
+        return default_value
+    
+    def extract_all_values(self, text):
         try:
-            # Regex patterns for all values
-            total_earnings_match = re.search(r"Total Earnings\s+(\d{1,3}(?:,\d{3})*\.\d{2})", pdf_text)
-            overtime_match = re.search(r"Overtime\s+(\d{1,3}(?:,\d{3})*\.\d{2})", pdf_text)
-            commision_bonus_match = re.search(r"Commission\/Bonus\s+(\d{1,3}(?:,\d{3})*\.\d{2})", pdf_text)
+            self.pdf_text = text
 
-            total_deductions_match = re.search(r"Total Deductions\s+(\d{1,3}(?:,\d{3})*\.\d{2})", pdf_text)
-            pf_match = re.search(r"ProvidentFundContributionEmployee\s+(\d{1,3}(?:,\d{3})*\.\d{2})", pdf_text)
-            eobi_match = re.search(r"EOBIContributionEmployee\s+(\d{1,3}(?:,\d{3})*\.\d{2})", pdf_text)
-            tax_match = re.search(r"PayrollTax\s+(\d{1,3}(?:,\d{3})*\.\d{2})", pdf_text)
-
-            take_home_match = re.search(r"Take Home Pay\s+(\d{1,3}(?:,\d{3})*\.\d{2})", pdf_text)
-
-            # Extract the values or None if not found
-            total_earnings = total_earnings_match.group(1) if total_earnings_match else 0 
-            overtime = overtime_match.group(1) if overtime_match else 0
-            commision_with_bonus = commision_bonus_match.group(1) if commision_bonus_match else 0
-            # basic_with_medical = float(total_earnings) - float(commision_with_bonus) - float(overtime)  
-
-            total_deductions = total_deductions_match.group(1) if total_deductions_match else 0
-            provident_fund = pf_match.group(1) if pf_match else 0
-            payroll_tax = tax_match.group(1) if tax_match else 0
-            eobi = eobi_match.group(1) if eobi_match else 0
-
-            take_home = take_home_match.group(1) if take_home_match else 0
+            # Extract values using keywords
+            total_earnings = self.extract_value("Total Earnings")
+            overtime = self.extract_value("Overtime")
+            commission_bonus = self.extract_value("Commission/Bonus")
+            bonus_winner = self.extract_value("Bonus / Winners")
+            total_deductions = self.extract_value("Total Deductions")
+            provident_fund = self.extract_value("Provident Fund Contribution Employee")
+            eobi = self.extract_value("EOBI Contribution")
+            payroll_tax = self.extract_value("Payroll Tax")
+            medical = self.extract_value("Medical / OPD Reimbursement")
 
             return [
                 total_earnings,
-                # basic_with_medical,
                 overtime,
-                commision_with_bonus,
+                commission_bonus,
+                bonus_winner,
                 total_deductions,
                 eobi,
                 provident_fund,
                 payroll_tax,
-                take_home,
+                medical
             ]
         except Exception as e:
             logging.error(f"Error extracting all values: {e}")
@@ -140,41 +145,50 @@ class SalarySlipsManager:
     def save_to_excel(self):
         # Create a DataFrame from the salary data list
         df = pd.DataFrame(self.salary_data, columns=[
-            "Total Earnings",
+            "Earnings",
             "Overtime",
-            "Commission/Bonus",
-            "Total Deductions",
+            "CommissionBonus",
+            "BonusWinners",
+            "Deductions",
             "EOBI",
             "PF",
-            "Payroll Tax",
-            "Take Home Pay"
+            "Tax",
+            "Medical"
         ])
 
-        # Convert numeric fields to numbers
+        # Convert numeric fields to strings and remove commas
         numeric_columns = [
-            "Total Earnings",
+            "Earnings",
             "Overtime",
-            "Commission/Bonus",
-            "Total Deductions",
+            "CommissionBonus",
+            "BonusWinners",
+            "Deductions",
             "EOBI",
             "PF",
-            "Payroll Tax",
-            "Take Home Pay"
+            "Tax",
+            "Medical"
         ]
         for column in numeric_columns:
             if column in df.columns:
-                # Remove commas and convert to float
-                df[column] = df[column].str.replace(',', '').astype(float)
+                # Convert values to strings, then remove commas, and finally convert to float
+                df[column] = df[column].fillna('0').astype(str).str.replace(',', '')
+                # Convert to float
+                df[column] = pd.to_numeric(df[column], errors='coerce').fillna(0)
 
-                # Place 0 in empty fields
-                df.fillna(0, inplace=True)
+        # Calculate 'Basic With Medical Allowance'
+        df["Total Salary"] = df["Earnings"] - df["CommissionBonus"] - df["BonusWinners"] - df["Overtime"] - df["Medical"]
+        df["Total Bonus"] = df["CommissionBonus"] + df["BonusWinners"]
+        df["Total After Deductions"] = df["Earnings"] - df["Deductions"]
 
-        df["Basic With Medical Allowance"] = df["Total Earnings"] - df["Commission/Bonus"] - df["Overtime"]
+        # Remove the bonus columns 
+        df.drop(columns=["CommissionBonus", "BonusWinners"], inplace=True)
+
+        #Iterate through the dataframe and add a column with the incremental month starting from October 2023
+        df["Month"] = pd.date_range(start="2023-10-01", periods=len(df), freq='M').strftime("%B %Y")
 
         # Save to Excel file
         df.to_excel("Joblogic Salary Details.xlsx", index=False)
-        logging.info("Data saved to salary_slips.xlsx")
-
+        logging.info("Data saved to Joblogic Salary Details.xlsx")
 
 
 helper = SalarySlipsManager()
@@ -209,19 +223,3 @@ else:
 
 # Save the extracted data to an Excel file
 helper.save_to_excel()
-
-
-# Earnings Amount PKR
-# Basic+MedicalAllowance (1.00@
-# 300000.00) 300,000.00
-# Total Earnings 300,000.00
-# Deductions Amount PKR
-# PayrollTax 37,651.00
-# ProvidentFundContributionEmployee 27,273.00
-# EOBIContributionEmployee 370.00
-# Total Deductions 65,294.00
-# Take Home Pay 234,706.00PAYSLIP
-# Awaisul HassanPay Day
-# 31Dec2024
-# Pay Period
-# 1Dec2024to31Dec2024
