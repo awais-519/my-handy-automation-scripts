@@ -183,7 +183,7 @@ class SalarySlipsManager:
         df["Month"] = pd.date_range(start="2023-10-01", periods=len(df), freq='M').strftime("%B %Y")
 
         # Save to Excel file
-        df.to_excel("Joblogic Salary Details.xlsx", index=False)
+        df.to_excel(r"C:\Users\hawai\Desktop\ME\Companies\JL\Joblogic Salary Details.xlsx", index=False)
         print("Data saved to Joblogic Salary Details.xlsx")
 
 
